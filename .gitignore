@@ -6,9 +6,10 @@
 tfplan
 
 # Local env / generated files
+# common.env holds credentials and TF_VAR_* overrides — never commit it
+common.env
 *.env
 .generated/
-overrides.env
 
 # macOS
 .DS_Store

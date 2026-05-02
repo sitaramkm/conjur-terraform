@@ -37,54 +37,37 @@ data/<prefix>/secrets/saas-external-apis/timezone/token
 
 ## Setup
 
-### 1. Configure variables
+### 1. Configure common.env
 
 ```bash
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your tenant, prefix, OIDC issuer, etc.
+cp common.env.example common.env
+# Edit common.env — set your tenant, credentials, and TF_VAR_* values
 ```
 
-### 2. Export provider credentials
+`common.env` is gitignored. It holds your Conjur credentials and all
+Terraform variable values. `scripts/run.sh` sources it automatically.
 
-The provider reads these environment variables directly:
-
-```bash
-export CONJUR_TENANT="mycompany"
-export CONJUR_AUTHN_LOGIN="admin"
-export CONJUR_AUTHN_API_KEY="<your-api-key>"   # the password you use with conjur login
-```
-
-> **Note:** `CONJUR_APPLIANCE_URL` and `CONJUR_ACCOUNT` are derived automatically
-> by `scripts/run.sh`.  If you run Terraform directly, set them yourself:
-> ```bash
-> export CONJUR_APPLIANCE_URL="https://${CONJUR_TENANT}.secretsmgr.cyberark.cloud/api"
-> export CONJUR_ACCOUNT="conjur"
-> ```
-
-### 3. Log in to Conjur CLI (preflight check)
+### 2. Log in to Conjur CLI
 
 ```bash
 conjur login -u admin -p <api-key>
 conjur whoami   # verify session
 ```
 
+`run.sh` checks `conjur whoami` as a preflight before every Terraform run.
+
 ## Usage
 
 ```bash
-# Bootstrap everything
-./scripts/run.sh create
-
-# Tear down
-./scripts/run.sh destroy
-
-# Show outputs only
-./scripts/run.sh output
+./scripts/run.sh create    # bootstrap all Conjur resources and push secrets
+./scripts/run.sh destroy   # tear down all Conjur resources
+./scripts/run.sh output    # print Terraform outputs
 ```
 
-Or run Terraform directly (always use `-parallelism=1`):
+Or run Terraform directly after sourcing `common.env` (always use `-parallelism=1`):
 
 ```bash
+source common.env
 cd terraform
 terraform init
 terraform plan -out=tfplan
@@ -97,16 +80,15 @@ terraform apply -parallelism=1 tfplan
 
 ## Rotating a secret value
 
-Increment `value_wo_version` in `terraform.tfvars` and re-apply:
+Update the value in `common.env` and re-apply:
 
-```hcl
-# terraform.tfvars
-openweather_api_key = "NEW-API-KEY"
-# also bump the version in modules/conjur-cloud/main.tf or override via TF_VAR:
+```bash
+# common.env
+export TF_VAR_openweather_api_key="NEW-API-KEY"
 ```
 
 ```bash
-TF_VAR_openweather_api_key="NEW-KEY" terraform apply -parallelism=1
+./scripts/run.sh create
 ```
 
 Because `value_wo` is write-only, the value is never stored in Terraform
@@ -116,13 +98,14 @@ state — only pushed to Conjur.
 
 ```
 conjur-terraform/
+├── common.env.example              # Copy to common.env (gitignored)
 ├── scripts/
 │   └── run.sh                      # Preflight + Terraform wrapper
 └── terraform/
     ├── main.tf                     # Provider config + module call
     ├── variables.tf
     ├── outputs.tf
-    ├── terraform.tfvars.example
+    ├── terraform.tfvars.example    # Alternative to common.env for direct tf use
     └── modules/
         └── conjur-cloud/
             ├── main.tf             # All Conjur resources
