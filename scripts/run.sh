@@ -14,8 +14,6 @@ set -euo pipefail
 #
 # Minimum required after loading common.env (or exported directly):
 #   CONJUR_TENANT        — tenant name (e.g. mycompany)
-#   CONJUR_AUTHN_LOGIN   — Conjur login (e.g. admin)
-#   CONJUR_AUTHN_API_KEY — API key (the password used with conjur login)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -58,9 +56,7 @@ require_conjur_login() {
 # ── Validate and finalize provider env vars ──────────────────
 setup_provider_env() {
   : "${CONJUR_TENANT:?CONJUR_TENANT not set — add it to common.env or export it}"
-  : "${CONJUR_AUTHN_LOGIN:?CONJUR_AUTHN_LOGIN not set — add it to common.env or export it}"
-  : "${CONJUR_AUTHN_API_KEY:?CONJUR_AUTHN_API_KEY not set — add it to common.env or export it}"
-
+  
   # Derive these if not already set (e.g. common.env may have set them explicitly)
   export CONJUR_APPLIANCE_URL="${CONJUR_APPLIANCE_URL:-https://${CONJUR_TENANT}.secretsmgr.cyberark.cloud/api}"
   export CONJUR_ACCOUNT="${CONJUR_ACCOUNT:-conjur}"
@@ -68,7 +64,6 @@ setup_provider_env() {
   echo "==> Provider config"
   echo "    Appliance URL: ${CONJUR_APPLIANCE_URL}"
   echo "    Account:       ${CONJUR_ACCOUNT}"
-  echo "    Login:         ${CONJUR_AUTHN_LOGIN}"
 }
 
 # ── Ensure TF_VAR_conjur_tenant is set ────────────────────────
