@@ -11,5 +11,9 @@ common.env
 *.env
 .generated/
 
+# Local provider build and generated dev-overrides config (machine-specific paths)
+.build/
+.terraform-dev.rc
+
 # macOS
 .DS_Store
