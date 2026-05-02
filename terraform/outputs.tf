@@ -1,34 +1,34 @@
 output "conjur_auth_url" {
   description = "JWT authentication URL for workloads"
-  value       = module.conjur_cloud.conjur_auth_url
+  value       = "https://${var.conjur_tenant}.secretsmgr.cyberark.cloud/api/authn-jwt/${conjur_authenticator.jwt.name}/conjur/authenticate"
 }
 
 output "conjur_secret_base_url" {
   description = "Base URL for secret retrieval"
-  value       = module.conjur_cloud.conjur_secret_base_url
+  value       = "https://${var.conjur_tenant}.secretsmgr.cyberark.cloud/api/secrets/conjur/variable/"
 }
 
 output "openweather_api_key_id" {
   description = "Conjur variable ID for the OpenWeather API key"
-  value       = module.conjur_cloud.openweather_api_key_id
+  value       = "${local.branch_openweather}/api-key"
 }
 
 output "openweather_api_key_id_encoded" {
   description = "URL-encoded variable ID (append to conjur_secret_base_url)"
-  value       = module.conjur_cloud.openweather_api_key_id_encoded
+  value       = replace("${local.branch_openweather}/api-key", "/", "%2F")
 }
 
 output "timezone_token_id" {
   description = "Conjur variable ID for the Timezone token"
-  value       = module.conjur_cloud.timezone_token_id
+  value       = "${local.branch_timezone}/token"
 }
 
 output "timezone_token_id_encoded" {
   description = "URL-encoded variable ID (append to conjur_secret_base_url)"
-  value       = module.conjur_cloud.timezone_token_id_encoded
+  value       = replace("${local.branch_timezone}/token", "/", "%2F")
 }
 
 output "workload_host_id" {
   description = "Full Conjur host ID for the workload identity"
-  value       = module.conjur_cloud.workload_host_id
+  value       = "${local.branch_workloads}/${var.swa_nodegroup_name}"
 }
