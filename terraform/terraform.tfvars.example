@@ -1,0 +1,13 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — do not commit real secrets.
+
+conjur_tenant       = "mycompany"
+swa_resource_prefix = "swa-demo"
+swa_oidc_issuer_url = "https://mycompany.my.workloads.cyberark.cloud"
+swa_nodegroup_name  = "swa-demo-nodegroup"
+spiffe_subject      = "swa-demo-nodegroup"
+conjur_jwt_audience = "conjur"
+
+# Secret values — leave as FAKE for initial demo; update to rotate
+openweather_api_key = "FAKE-OPENWEATHER-API-KEY"
+timezone_token      = "FAKE-TIMEZONE-TOKEN"

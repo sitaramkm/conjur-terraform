@@ -1,0 +1,14 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+tfplan
+
+# Local env / generated files
+*.env
+.generated/
+overrides.env
+
+# macOS
+.DS_Store
