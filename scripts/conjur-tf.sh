@@ -91,11 +91,17 @@ cmd_build_provider() {
     exit 1
   fi
 
+  local branch
+  branch="$(git -C "${CONJUR_PROVIDER_SRC_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+
   echo "==> Building terraform-provider-conjur..."
-  echo "    Source: ${CONJUR_PROVIDER_SRC_DIR}"
+  echo "    Source: ${CONJUR_PROVIDER_SRC_DIR} (branch: ${branch})"
   echo "    Output: ${PROVIDER_BINARY}"
   mkdir -p "${BUILD_DIR}"
-  (cd "${CONJUR_PROVIDER_SRC_DIR}" && go build -o "${PROVIDER_BINARY}" .)
+  # -mod=mod lets Go resolve the 'latest' replace directive in go.mod that the
+  # upstream repo uses as a CI placeholder. go.mod may be updated on disk but
+  # the change should not be committed.
+  (cd "${CONJUR_PROVIDER_SRC_DIR}" && go build -mod=mod -o "${PROVIDER_BINARY}" .)
   echo "    Build complete. All subsequent runs will use this local binary."
   echo "    Delete .build/ to revert to the published provider."
 }
