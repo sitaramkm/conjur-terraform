@@ -1,0 +1,54 @@
+# jwt-authenticator.yaml
+- !policy
+  id: ${CONJUR_AUTHN_JWT_AUTHENTICATOR_ID}
+  body:
+  - !webservice
+    annotations:
+      description: JWT authenticator for Secure Workload Access
+
+  - !variable
+    id: jwks-uri
+    annotations:
+      description: JWKS URI for SWA server
+
+  - !variable
+    id: token-app-property
+    annotations:
+      description: JWT claim to use as application identity
+
+  - !variable
+    id: identity-path
+    annotations:
+      description: Path where identities will be created
+
+  - !variable
+    id: issuer
+    annotations:
+      description: Expected JWT issuer
+
+  - !variable
+    id: audience
+    annotations:
+      description: Expected audience from JWT token
+
+  - !group
+    id: apps
+    annotations:
+      description: Group for JWT authenticated apps
+
+  - !permit
+    role: !group apps
+    privilege: [ read, authenticate ]
+    resource: !webservice
+
+  - !webservice status
+
+  - !group
+    id: operators
+    annotations:
+      description: Group for JWT authenticated operators
+
+  - !permit
+    role: !group operators
+    privilege: [ read ]
+    resource: !webservice status

@@ -1,0 +1,17 @@
+# workload-identities.yaml.tmpl
+- !policy
+  id: ${CONJUR_RESOURCE_PREFIX}/workloads
+  body:
+    - !group
+      id: apps
+
+    - !host
+      id: ${SPIFFE_SUBJECT}
+      annotations:
+        description: Test workload
+        authn-jwt/${CONJUR_AUTHN_JWT_AUTHENTICATOR_ID}/sub: ${SPIFFE_SUBJECT}
+
+    - !grant
+      role: !group apps
+      members:
+        - !host ${SPIFFE_SUBJECT}

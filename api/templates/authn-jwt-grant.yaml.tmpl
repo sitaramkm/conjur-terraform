@@ -1,0 +1,4 @@
+# authn-jwt-grant.yaml
+- !grant
+  role: !group apps
+  member: !group /data/${CONJUR_RESOURCE_PREFIX}/workloads/apps
