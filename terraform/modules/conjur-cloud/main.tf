@@ -15,8 +15,23 @@
 # with 409 Conflict.  Always run terraform with -parallelism=1.
 # ============================================================
 
+terraform {
+  required_providers {
+    conjur = {
+      source  = "cyberark/conjur"
+      version = "~> 0.8"
+    }
+  }
+}
+
 locals {
-  authenticator_id = "${var.swa_resource_prefix}-jwt-authenticator"
+  authenticator_id   = "${var.swa_resource_prefix}-jwt-authenticator"
+  branch_prefix      = "data/${var.swa_resource_prefix}"
+  branch_workloads   = "data/${var.swa_resource_prefix}/workloads"
+  branch_secrets     = "data/${var.swa_resource_prefix}/secrets"
+  branch_saas        = "data/${var.swa_resource_prefix}/secrets/saas-external-apis"
+  branch_openweather = "data/${var.swa_resource_prefix}/secrets/saas-external-apis/openweather"
+  branch_timezone    = "data/${var.swa_resource_prefix}/secrets/saas-external-apis/timezone"
 }
 
 # ── 1. JWT Authenticator ──────────────────────────────────────
@@ -44,10 +59,6 @@ resource "conjur_authenticator" "jwt" {
     }
   }
 
-  annotations = {
-    description = "JWT authenticator for ${var.swa_resource_prefix}"
-    swa_prefix  = var.swa_resource_prefix
-  }
 }
 
 # ── 2a. Policy branch: data/${prefix} ────────────────────────
@@ -69,7 +80,7 @@ resource "conjur_policy_branch" "prefix" {
 #   conjur policy load -b data -f policy-tree.yaml   (creates the branch)
 #   conjur policy load -b data -f workload-identities.yaml (populates it)
 resource "conjur_policy_branch" "workloads" {
-  branch = conjur_policy_branch.prefix.full_id
+  branch = local.branch_prefix
   name   = "workloads"
 
   annotations = {
@@ -81,7 +92,7 @@ resource "conjur_policy_branch" "workloads" {
 
 # ── 2c. Policy branch: data/${prefix}/secrets ────────────────
 resource "conjur_policy_branch" "secrets" {
-  branch = conjur_policy_branch.prefix.full_id
+  branch = local.branch_prefix
   name   = "secrets"
 
   annotations = {
@@ -94,7 +105,7 @@ resource "conjur_policy_branch" "secrets" {
 
 # ── 2d. Policy branch: …/secrets/saas-external-apis ──────────
 resource "conjur_policy_branch" "saas_external_apis" {
-  branch = conjur_policy_branch.secrets.full_id
+  branch = local.branch_secrets
   name   = "saas-external-apis"
 
   annotations = {
@@ -106,7 +117,7 @@ resource "conjur_policy_branch" "saas_external_apis" {
 
 # ── 2e. Policy branch: …/saas-external-apis/openweather ──────
 resource "conjur_policy_branch" "openweather" {
-  branch = conjur_policy_branch.saas_external_apis.full_id
+  branch = local.branch_saas
   name   = "openweather"
 
   depends_on = [conjur_policy_branch.saas_external_apis]
@@ -114,7 +125,7 @@ resource "conjur_policy_branch" "openweather" {
 
 # ── 2f. Policy branch: …/saas-external-apis/timezone ─────────
 resource "conjur_policy_branch" "timezone" {
-  branch = conjur_policy_branch.saas_external_apis.full_id
+  branch = local.branch_saas
   name   = "timezone"
 
   # Sequential with openweather — same parent, avoids 409
@@ -126,7 +137,7 @@ resource "conjur_policy_branch" "timezone" {
 # Equivalent to:  !group id: apps  inside workload-identities.yaml
 resource "conjur_group" "workload_apps" {
   name   = "apps"
-  branch = conjur_policy_branch.workloads.full_id
+  branch = local.branch_workloads
 
   annotations = {
     description = "Application workloads for ${var.swa_resource_prefix}"
@@ -144,7 +155,7 @@ resource "conjur_group" "workload_apps" {
 #       authn-jwt/<id>/sub: ${SPIFFE_SUBJECT}
 resource "conjur_host" "workload" {
   name   = var.swa_nodegroup_name
-  branch = conjur_policy_branch.workloads.full_id
+  branch = local.branch_workloads
 
   annotations = {
     description                                    = "Workload identity for ${var.swa_resource_prefix}"
@@ -169,9 +180,9 @@ resource "conjur_host" "workload" {
 #     members:
 #       - !host ${SPIFFE_SUBJECT}
 resource "conjur_membership" "host_to_apps" {
-  group_id    = "${conjur_policy_branch.workloads.full_id}/apps"
+  group_id    = "${local.branch_workloads}/apps"
   member_kind = "host"
-  member_id   = "${conjur_policy_branch.workloads.full_id}/${var.swa_nodegroup_name}"
+  member_id   = "${local.branch_workloads}/${var.swa_nodegroup_name}"
 
   depends_on = [conjur_host.workload, conjur_group.workload_apps]
 }
@@ -186,7 +197,7 @@ resource "conjur_membership" "host_to_apps" {
 resource "conjur_membership" "apps_to_authn" {
   group_id    = "conjur/authn-jwt/${local.authenticator_id}/apps"
   member_kind = "group"
-  member_id   = "${conjur_policy_branch.workloads.full_id}/apps"
+  member_id   = "${local.branch_workloads}/apps"
 
   depends_on = [conjur_membership.host_to_apps]
 }
@@ -202,7 +213,7 @@ resource "conjur_membership" "apps_to_authn" {
 # stored in Terraform state.  Increment value_wo_version to rotate.
 resource "conjur_secret" "openweather_api_key" {
   name   = "api-key"
-  branch = conjur_policy_branch.openweather.full_id
+  branch = local.branch_openweather
 
   value_wo         = var.openweather_api_key
   value_wo_version = 1
@@ -215,7 +226,7 @@ resource "conjur_secret" "openweather_api_key" {
     {
       subject = {
         kind = "host"
-        id   = "${conjur_policy_branch.workloads.full_id}/${var.swa_nodegroup_name}"
+        id   = "${local.branch_workloads}/${var.swa_nodegroup_name}"
       }
       privileges = ["read", "execute"]
     }
@@ -227,7 +238,7 @@ resource "conjur_secret" "openweather_api_key" {
 # ── 6b. Secret: timezone/token ────────────────────────────────
 resource "conjur_secret" "timezone_token" {
   name   = "token"
-  branch = conjur_policy_branch.timezone.full_id
+  branch = local.branch_timezone
 
   value_wo         = var.timezone_token
   value_wo_version = 1
@@ -240,7 +251,7 @@ resource "conjur_secret" "timezone_token" {
     {
       subject = {
         kind = "host"
-        id   = "${conjur_policy_branch.workloads.full_id}/${var.swa_nodegroup_name}"
+        id   = "${local.branch_workloads}/${var.swa_nodegroup_name}"
       }
       privileges = ["read", "execute"]
     }
