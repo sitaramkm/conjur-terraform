@@ -4,18 +4,18 @@ variable "conjur_tenant" {
 }
 
 variable "conjur_login" {
-  description = "Conjur login (username). Get with: conjur whoami"
+  description = "Conjur login for the automation workload host. Get with: conjur whoami"
   type        = string
 }
 
 variable "conjur_api_key" {
-  description = "Conjur API key for conjur_login. Get with: conjur user rotate-api-key"
+  description = "Conjur API key for conjur_login. Get with: conjur host rotate-api-key -i <host-id>"
   type        = string
   sensitive   = true
 }
 
 variable "conjur_resource_prefix" {
-  description = "Prefix used for all Conjur resources created by this configuration"
+  description = "Prefix used for all Conjur resources (must match the admin workspace)"
   type        = string
 }
 
