@@ -19,11 +19,11 @@ output "conjur_secret_url_base" {
 }
 
 output "openweather_api_key_id" {
-  description = "Full Conjur variable ID for the OpenWeather API key (URL-encoded for API use)"
-  value       = replace("${conjur_policy_branch.app_root.full_id}/${conjur_secret.openweather_api_key.name}", "/", "%2F")
+  description = "Full Conjur variable ID for the OpenWeather API key (URL-encoded for REST API use)"
+  value       = replace("data/${var.conjur_resource_prefix}/${conjur_secret.openweather_api_key.name}", "/", "%2F")
 }
 
 output "timezone_token_id" {
-  description = "Full Conjur variable ID for the Timezone token (URL-encoded for API use)"
-  value       = replace("${conjur_policy_branch.app_root.full_id}/${conjur_secret.timezone_token.name}", "/", "%2F")
+  description = "Full Conjur variable ID for the Timezone token (URL-encoded for REST API use)"
+  value       = replace("data/${var.conjur_resource_prefix}/${conjur_secret.timezone_token.name}", "/", "%2F")
 }

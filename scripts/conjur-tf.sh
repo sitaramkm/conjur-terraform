@@ -1,28 +1,36 @@
 #!/usr/bin/env bash
 # conjur-tf.sh — orchestrator for the Conjur Cloud Terraform workflow
 #
-# Usage:
-#   ./scripts/conjur-tf.sh build-provider  # compile local provider fork (needed for fixes not yet published)
-#   ./scripts/conjur-tf.sh init            # terraform init (published provider only; skip when using local build)
-#   ./scripts/conjur-tf.sh plan            # terraform plan
-#   ./scripts/conjur-tf.sh create          # terraform apply
-#   ./scripts/conjur-tf.sh destroy         # terraform destroy
-#   ./scripts/conjur-tf.sh output          # terraform output -json
+# Two workspaces, two identities:
 #
-# Provider selection (automatic):
-#   If .build/terraform-provider-conjur exists, it is used via dev_overrides.
-#   Otherwise the published cyberark/conjur provider is used (requires `init` first).
+#   ADMIN workspace  (terraform/admin/)
+#     Uses the active `conjur login` CLI session — no API key required.
+#     Creates/removes policy branches and grants permissions.
+#
+#   AUTOMATION workspace  (terraform/automation/)
+#     Uses the workload host API key from common.env.
+#     Creates and updates secret values. Secrets have prevent_destroy = true.
+#
+# Usage:
+#   ./scripts/conjur-tf.sh admin-setup      # create policy branch + grants (requires conjur login)
+#   ./scripts/conjur-tf.sh admin-teardown   # destroy branch + ALL resources under it (irreversible)
+#   ./scripts/conjur-tf.sh plan             # terraform plan  (automation workspace)
+#   ./scripts/conjur-tf.sh create           # terraform apply (automation workspace)
+#   ./scripts/conjur-tf.sh output           # terraform output -json (automation workspace)
+#   ./scripts/conjur-tf.sh build-provider   # compile local provider fork to .build/
+#   ./scripts/conjur-tf.sh init             # terraform init (automation workspace; skip with local build)
 #
 # Prerequisites:
 #   - common.env present at repo root (copy from common.env.example)
-#   - `conjur login` completed before plan / create / destroy
+#   - `conjur login` completed before admin-setup / admin-teardown
 #   - Go installed (for build-provider)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-TF_DIR="${ROOT_DIR}/terraform"
+ADMIN_DIR="${ROOT_DIR}/terraform/admin"
+AUTOMATION_DIR="${ROOT_DIR}/terraform/automation"
 BUILD_DIR="${ROOT_DIR}/.build"
 PROVIDER_BINARY="${BUILD_DIR}/terraform-provider-conjur"
 DEV_RC="${ROOT_DIR}/.terraform-dev.rc"
@@ -32,7 +40,7 @@ COMMON_ENV="${ROOT_DIR}/common.env"
 
 [[ -f "${COMMON_ENV}" ]] || {
   echo "ERROR: ${COMMON_ENV} not found."
-  echo "       Copy common.env.example to common.env and fill in CONJUR_TENANT."
+  echo "       Copy common.env.example to common.env and fill in your values."
   exit 1
 }
 # shellcheck disable=SC1090
@@ -45,11 +53,12 @@ source "${COMMON_ENV}"
 require_conjur_login() {
   echo "==> Checking Conjur CLI session..."
   if ! conjur whoami >/dev/null 2>&1; then
-    echo "ERROR: Conjur CLI is not authenticated."
-    echo "       Run 'conjur login' and retry."
+    echo "ERROR: Conjur CLI is not authenticated. Run 'conjur login' and retry."
     exit 1
   fi
-  echo "    Session active."
+  local user
+  user="$(conjur whoami 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin)["username"])' 2>/dev/null || echo 'unknown')"
+  echo "    Session active (${user})."
 }
 
 # Write a .terraformrc that points dev_overrides at the local binary directory.
@@ -65,42 +74,34 @@ provider_installation {
 EOF
 }
 
-# Run terraform with the appropriate config: dev_overrides if a local binary
-# exists, plain published provider otherwise.
-run_terraform() {
+# Run terraform in the automation workspace, with dev_overrides if a local
+# provider binary exists.
+run_automation() {
   local subcmd="$1"; shift
-
   if [[ -f "${PROVIDER_BINARY}" ]]; then
     write_dev_rc
-    TF_CLI_CONFIG_FILE="${DEV_RC}" terraform -chdir="${TF_DIR}" "${subcmd}" "$@"
+    TF_CLI_CONFIG_FILE="${DEV_RC}" terraform -chdir="${AUTOMATION_DIR}" "${subcmd}" "$@"
   else
-    terraform -chdir="${TF_DIR}" "${subcmd}" "$@"
+    terraform -chdir="${AUTOMATION_DIR}" "${subcmd}" "$@"
   fi
 }
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 cmd_build_provider() {
-  : "${CONJUR_PROVIDER_SRC_DIR:?CONJUR_PROVIDER_SRC_DIR must be set in common.env (path to terraform-provider-conjur fork)}"
+  : "${CONJUR_PROVIDER_SRC_DIR:?CONJUR_PROVIDER_SRC_DIR must be set in common.env}"
   [[ -d "${CONJUR_PROVIDER_SRC_DIR}" ]] || {
     echo "ERROR: CONJUR_PROVIDER_SRC_DIR (${CONJUR_PROVIDER_SRC_DIR}) does not exist."
     exit 1
   }
-  if ! command -v go >/dev/null 2>&1; then
-    echo "ERROR: 'go' not found in PATH. Install Go and retry."
-    exit 1
-  fi
+  command -v go >/dev/null 2>&1 || { echo "ERROR: 'go' not found in PATH."; exit 1; }
 
   local branch
-  branch="$(git -C "${CONJUR_PROVIDER_SRC_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
-
+  branch="$(git -C "${CONJUR_PROVIDER_SRC_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
   echo "==> Building terraform-provider-conjur..."
   echo "    Source: ${CONJUR_PROVIDER_SRC_DIR} (branch: ${branch})"
   echo "    Output: ${PROVIDER_BINARY}"
   mkdir -p "${BUILD_DIR}"
-  # -mod=mod lets Go resolve the 'latest' replace directive in go.mod that the
-  # upstream repo uses as a CI placeholder. go.mod may be updated on disk but
-  # the change should not be committed.
   (cd "${CONJUR_PROVIDER_SRC_DIR}" && go build -mod=mod -o "${PROVIDER_BINARY}" .)
   echo "    Build complete. All subsequent runs will use this local binary."
   echo "    Delete .build/ to revert to the published provider."
@@ -108,63 +109,86 @@ cmd_build_provider() {
 
 cmd_init() {
   if [[ -f "${PROVIDER_BINARY}" ]]; then
-    echo "NOTE: Local provider binary detected — 'init' is not needed for dev_overrides."
-    echo "      Run 'plan' directly. Delete .build/ if you want to use the published provider."
+    echo "NOTE: Local provider binary detected — 'init' is not needed for the automation workspace."
+    echo "      Run 'plan' directly. Delete .build/ to use the published provider."
     exit 0
   fi
-  echo "==> Running terraform init..."
-  run_terraform init -upgrade
+  echo "==> Initialising automation workspace..."
+  run_automation init -upgrade
+}
+
+cmd_admin_setup() {
+  require_conjur_login
+  echo "==> Initialising admin workspace..."
+  terraform -chdir="${ADMIN_DIR}" init -upgrade -input=false >/dev/null
+  echo "==> Applying admin workspace (policy branch + permissions)..."
+  terraform -chdir="${ADMIN_DIR}" apply -auto-approve
+}
+
+cmd_admin_teardown() {
+  require_conjur_login
+  echo ""
+  echo "  WARNING: admin-teardown deletes the policy branch and ALL Conjur"
+  echo "  resources under it (secrets, hosts, grants). This cannot be undone."
+  echo ""
+  read -r -p "  Type 'yes' to confirm teardown: " confirm
+  [[ "${confirm}" == "yes" ]] || { echo "Aborted."; exit 0; }
+  echo ""
+  echo "==> Destroying admin workspace..."
+  terraform -chdir="${ADMIN_DIR}" destroy -auto-approve
 }
 
 cmd_plan() {
-  require_conjur_login
   if [[ -f "${PROVIDER_BINARY}" ]]; then
-    echo "==> Running terraform plan (local provider build)..."
+    echo "==> Running terraform plan (automation workspace, local provider build)..."
   else
-    echo "==> Running terraform plan (published provider)..."
+    echo "==> Running terraform plan (automation workspace, published provider)..."
   fi
-  run_terraform plan
+  run_automation plan
 }
 
 cmd_create() {
-  require_conjur_login
-  echo "==> Running terraform apply..."
-  run_terraform apply -auto-approve
-}
-
-cmd_destroy() {
-  require_conjur_login
-  echo "==> Running terraform destroy..."
-  run_terraform destroy -auto-approve
+  echo "==> Running terraform apply (automation workspace)..."
+  run_automation apply -auto-approve
 }
 
 cmd_output() {
-  run_terraform output -json
+  run_automation output -json
 }
 
 usage() {
   cat <<EOF
 Usage: $(basename "$0") <command>
 
-Commands:
-  build-provider   Compile the local provider fork to .build/ (use when a fix
-                   is needed that has not yet been published to the registry)
-  init             Download the published provider (skip when using local build)
-  plan             Run terraform plan  (requires conjur login)
-  create           Run terraform apply (requires conjur login)
-  destroy          Run terraform destroy (requires conjur login)
-  output           Show terraform output as JSON
+Admin commands  (use the active 'conjur login' session):
+  admin-setup      Create policy branch and grant workload host access
+  admin-teardown   Delete the branch and ALL resources under it (irreversible)
 
-Provider selection:
+Automation commands  (use workload API key from common.env):
+  plan             terraform plan  — show what will change
+  create           terraform apply — push secret values to Conjur
+  output           Show terraform outputs as JSON
+
+  Note: secrets have prevent_destroy = true. To delete them, run admin-teardown
+  which removes the entire policy branch via the admin CLI session.
+
+Provider / tooling:
+  build-provider   Compile the local provider fork to .build/
+  init             Download the published Conjur provider (skip with local build)
+
+Provider selection (automation workspace):
   If .build/terraform-provider-conjur exists it is used automatically via
   dev_overrides. Delete .build/ to revert to the published provider.
 
 Environment (set in common.env):
-  CONJUR_TENANT              Conjur Cloud tenant name
-  CONJUR_APPLIANCE_URL       Derived from CONJUR_TENANT
-  CONJUR_ACCOUNT             Typically "conjur"
-  CONJUR_PROVIDER_SRC_DIR    Path to local provider fork (build-provider only)
-  TF_VAR_*                   Passed automatically to Terraform
+  CONJUR_TENANT                Conjur Cloud tenant name
+  CONJUR_APPLIANCE_URL         https://\${CONJUR_TENANT}.secretsmgr.cyberark.cloud/api
+  CONJUR_ACCOUNT               Typically "conjur"
+  CONJUR_PROVIDER_SRC_DIR      Path to local provider fork (build-provider only)
+  TF_VAR_conjur_workload_host  Full host ID granted access by admin-setup
+  TF_VAR_conjur_login          Workload host login  (automation workspace)
+  TF_VAR_conjur_api_key        Workload host API key (automation workspace)
+  TF_VAR_*                     Other Terraform variables passed automatically
 EOF
   exit 1
 }
@@ -173,11 +197,12 @@ EOF
 
 ACTION="${1:-}"
 case "${ACTION}" in
-  build-provider) cmd_build_provider ;;
-  init)           cmd_init           ;;
+  admin-setup)    cmd_admin_setup    ;;
+  admin-teardown) cmd_admin_teardown ;;
   plan)           cmd_plan           ;;
   create)         cmd_create         ;;
-  destroy)        cmd_destroy        ;;
   output)         cmd_output         ;;
+  build-provider) cmd_build_provider ;;
+  init)           cmd_init           ;;
   *)              usage              ;;
 esac
